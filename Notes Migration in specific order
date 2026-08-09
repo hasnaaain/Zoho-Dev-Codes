@@ -1,0 +1,182 @@
+string standalone.Import_Notes_from_Old_to_New_Assets()
+{
+// ===== CHANGE ONLY THIS EACH RUN =====
+pageNumber = 9;
+// 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
+pageSize = 50;
+// =====================================
+lineBreak = hexToText("0A");
+totalAssets = 0;
+totalCreated = 0;
+totalDeleted = 0;
+totalSkipped = 0;
+assets2Page = zoho.crm.getRecords("Assets2",pageNumber,pageSize);
+if(assets2Page == null || assets2Page.size() == 0)
+{
+	info "No Assets2 records on page " + pageNumber;
+	return "No records on page " + pageNumber;
+}
+info "Processing Assets2 page " + pageNumber + " | count: " + assets2Page.size();
+for each  asset2 in assets2Page
+{
+	totalAssets = totalAssets + 1;
+	newAssetId = asset2.get("id");
+	loanId = asset2.get("Name");
+	if(loanId == null || loanId == "")
+	{
+		asset2Rec = zoho.crm.getRecordById("Assets2",newAssetId);
+		loanId = asset2Rec.get("Name");
+	}
+	if(loanId == null || loanId == "")
+	{
+		info "SKIP Assets2 " + newAssetId + " — no Loan ID (Name)";
+		totalSkipped = totalSkipped + 1;
+	}
+	else
+	{
+		searchCriteria = "(Name:equals:" + loanId + ")";
+		oldAssets = zoho.crm.searchRecords("Assets",searchCriteria);
+		if(oldAssets == null || oldAssets.size() == 0)
+		{
+			info "SKIP Loan ID " + loanId + " — no matching Assets record";
+			totalSkipped = totalSkipped + 1;
+		}
+		else
+		{
+			oldAssetId = oldAssets.get(0).get("id");
+			combinedNotes = List();
+			// 1) Already placed notes on Assets2 (KEEP)
+			notesAssets2 = zoho.crm.getRelatedRecords("Notes","Assets2",newAssetId);
+			if(notesAssets2 != null)
+			{
+				for each  n in notesAssets2
+				{
+					content = ifnull(n.get("Note_Content"),"");
+					title = ifnull(n.get("Note_Title"),"Note");
+					noteId = n.get("id");
+					sortKey = "9999-99-99T99:99:99";
+					startIdx = content.indexOf("(");
+					endIdx = content.indexOf(")");
+					if(startIdx >= 0 && endIdx > startIdx)
+					{
+						sortKey = content.subString(startIdx + 1,endIdx);
+					}
+					row = Map();
+					row.put("Note_Title",title);
+					row.put("Note_Content",content);
+					row.put("id",noteId);
+					row.put("sortKey",sortKey);
+					row.put("source","Assets2");
+					combinedNotes.add(row);
+				}
+			}
+			// 2) Notes from Assets (skip duplicates)
+			notesAssets = zoho.crm.getRelatedRecords("Notes","Assets",oldAssetId);
+			if(notesAssets != null)
+			{
+				for each  n in notesAssets
+				{
+					createdTime = ifnull(n.get("Created_Time"),"");
+					noteContent = ifnull(n.get("Note_Content"),"");
+					noteId = n.get("id");
+					alreadyExists = false;
+					for each  existing in combinedNotes
+					{
+						if(existing.get("sortKey") == createdTime)
+						{
+							alreadyExists = true;
+						}
+						else if(existing.get("Note_Content").contains("(" + createdTime + ")"))
+						{
+							alreadyExists = true;
+						}
+					}
+					if(!alreadyExists)
+					{
+						authorName = "";
+						createdBy = n.get("Created_By");
+						if(createdBy != null && createdBy.get("name") != null)
+						{
+							authorName = createdBy.get("name");
+						}
+						else
+						{
+							owner = n.get("Owner");
+							if(owner != null && owner.get("name") != null)
+							{
+								authorName = owner.get("name");
+							}
+						}
+						if(authorName == null || authorName == "")
+						{
+							authorName = "Note";
+						}
+						noteContent = noteContent.replaceAll("<br>",lineBreak);
+						noteContent = noteContent.replaceAll("<br/>",lineBreak);
+						noteContent = noteContent.replaceAll("<br />",lineBreak);
+						noteContent = noteContent.replaceAll("<span>","");
+						noteContent = noteContent.replaceAll("</span>","");
+						formattedContent = "(" + createdTime + ")" + lineBreak + noteContent;
+						sortKey = createdTime;
+						if(sortKey == "")
+						{
+							sortKey = "9999-99-99T99:99:99";
+						}
+						row = Map();
+						row.put("Note_Title",authorName);
+						row.put("Note_Content",formattedContent);
+						row.put("id",noteId);
+						row.put("sortKey",sortKey);
+						row.put("source","Assets");
+						combinedNotes.add(row);
+					}
+				}
+			}
+			info "Loan ID " + loanId + " | combined notes: " + combinedNotes.size();
+			if(combinedNotes.size() > 0)
+			{
+				sortKeys = List();
+				notesByKey = Map();
+				for each  row in combinedNotes
+				{
+					uniqueKey = row.get("sortKey") + "_" + row.get("id");
+					sortKeys.add(uniqueKey);
+					notesByKey.put(uniqueKey,row);
+				}
+				sortKeys.sort(false);
+				// 3) Delete current Assets2 notes
+				if(notesAssets2 != null)
+				{
+					for each  oldNote in notesAssets2
+					{
+						deleteRecordMap = Map();
+						deleteRecordMap.put("module","Notes");
+						deleteRecordMap.put("id",oldNote.get("id"));
+						deleteResp = zoho.crm.invokeConnector("crm.delete",deleteRecordMap);
+						totalDeleted = totalDeleted + 1;
+					}
+				}
+				// 4) Recreate on Assets2
+				for each  uniqueKey in sortKeys
+				{
+					row = notesByKey.get(uniqueKey);
+					noteMap = Map();
+					noteMap.put("Note_Title",row.get("Note_Title"));
+					noteMap.put("Note_Content",row.get("Note_Content"));
+					noteMap.put("Parent_Id",newAssetId);
+					noteMap.put("se_module","Assets2");
+					createResp = zoho.crm.createRecord("Notes",noteMap);
+					totalCreated = totalCreated + 1;
+				}
+				info "DONE Loan ID " + loanId + " | recreated: " + sortKeys.size();
+			}
+		}
+	}
+}
+info "======= PAGE " + pageNumber + " SUMMARY =======";
+info "Assets2 scanned: " + totalAssets;
+info "Skipped: " + totalSkipped;
+info "Notes deleted: " + totalDeleted;
+info "Notes created: " + totalCreated;
+return "Page " + pageNumber + " | scanned " + totalAssets + " | created " + totalCreated + " | skipped " + totalSkipped;
+}

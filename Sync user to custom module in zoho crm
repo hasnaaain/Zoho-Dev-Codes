@@ -1,0 +1,29 @@
+Sync user to a custom module in zoho crm
+// // ------------------------------------------------
+ser_info = zoho.crm.getRecords("users");
+users = user_info.get("users");
+for each  user in users
+{
+userMap = Map();
+userMap.put("Email",user.get("email"));
+userMap.put("Name",user.get("full_name"));
+userMap.put("User_ID",user.get("id").toString());
+check = zoho.crm.searchRecords("Sales_Persons","Email:equals:" + user.get("email"));
+// info check;
+status = user.get("status");
+// info status ;
+if(status == "active")
+{
+if(check.size() > 0)
+{
+info "User Already Exists...";
+// info zoho.crm.updateRecord("Sales_Persons", check.get(0).get("id"), userMap);
+}
+else
+{
+ceate_SalesPerson = zoho.crm.createRecord("Sales_Persons",userMap);
+info "user Created: ";
+info ceate_SalesPerson;
+}
+}
+}

@@ -1,0 +1,49 @@
+List1 = {{"4942812000039215439":"RC00151291"},{"4942812000039215438":"RC00706684"},{"4942812000039215437":"RC00497056"},{"4942812000039215436":"RC00002300"},{"4942812000039215435":"RC00934257"},{"4942812000039215434":"RC00033472"},{"4942812000039215433":"RC00807550"},{"4942812000039215432":"RC00064098"},{"4942812000039215431":"RC00556035"},{"4942812000039215430":"RC00166802"}};
+count = 0;
+Error_records_asset1 = List();
+for each  recMap in List1
+{
+	for each  key in recMap.keys()
+	{
+		Asset_id = key;
+		loanID = recMap.get(key);
+		info "loanID:" + " " + loanID;
+		searchAssets2 = zoho.crm.searchRecords("Assets2","Name:equals:" + loanID);
+		if(searchAssets2.size() > 0)
+		{
+			relatedAttachments = zoho.crm.getRelatedRecords("Attachments","Assets",Asset_id);
+			for each  attch in relatedAttachments
+			{
+				Attachment_id = attch.getJSON("$file_id");
+				try 
+				{
+					Download_response = invokeurl
+					[
+						url :"https://www.zohoapis.com/crm/v6/files?id=" + Attachment_id
+						type :GET
+						connection:"crmconnection"
+					];
+					attch_file_response = zoho.crm.attachFile("Assets2",searchAssets2.getJSON("id"),Download_response);
+					if(attch_file_response.get("code") == "SUCCESS")
+					{
+						info "Updated in the record id" + " " + searchAssets2.getJSON("id");
+						upadateMp = Map();
+						upadateMp.put("IS_Attached",true);
+						info zoho.crm.updateRecord("Assets2",searchAssets2.getJSON("id"),upadateMp);
+					}
+				}
+				catch (e)
+				{
+					info "Error while processing attachment " + Attachment_id + ": " + e + "" + "Asset id" + "" + Asset_id;
+					Error_records_asset1.add(Asset_id);
+					continue;
+				}
+			}
+		}
+	}
+	count = count + 1;
+}
+info "Error_records_asset1";
+info Error_records_asset1;
+info Error_records_asset1.size();
+info "count:" + count;

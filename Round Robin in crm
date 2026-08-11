@@ -1,0 +1,74 @@
+getSP = zoho.crm.getRecords("Sales_Persons");
+
+// 1) Find the currently last assigned user (if any) and reset their Last_Assigned = false
+lastAssignedId = null;
+for each sp in getSP
+{
+    if(sp.get("Last_Assigned") == true)
+    {
+        lastAssignedId = sp.get("id");
+        // Reset Last_Assigned to false for this user regardless of Active status
+        info zoho.crm.updateRecord("Sales_Persons", lastAssignedId, {"Last_Assigned": false});
+        break;
+    }
+}
+
+// 2) Build a list of only active sales persons (order preserved from getSP)
+activeSP = List();
+for each sp in getSP
+{
+    if(sp.get("Active") == true)
+    {
+        activeSP.add(sp);
+    }
+}
+
+// 3) If there are no active sales persons -> do not assign the lead
+if(activeSP.isEmpty())
+{
+    info "No active Sales_Persons found. Lead will not be assigned.";
+    return;
+}
+
+// 4) Determine the next owner according to round-robin among active sales persons
+newOwnerId = null;
+
+if(lastAssignedId != null)
+{
+    indexFound = -1;
+    idx = 0;
+    for each asp in activeSP
+    {
+        // compare as strings to avoid type mismatch
+        if(asp.get("id").toString() == lastAssignedId.toString())
+        {
+            indexFound = idx;
+            break;
+        }
+        idx = idx + 1;
+    }
+
+    if(indexFound != -1)
+    {
+        // pick next active user, wrap around using modulo
+        nextIndex = (indexFound + 1) % activeSP.size();
+        newOwnerId = activeSP.get(nextIndex).get("id");
+    }
+    else
+    {
+        // lastAssigned user was not active -> assign first active user
+        newOwnerId = activeSP.get(0).get("id");
+    }
+}
+else
+{
+    // no previous Last_Assigned found -> assign first active user
+    newOwnerId = activeSP.get(0).get("id");
+}
+
+// 5) Mark the chosen new owner Last_Assigned = true
+info zoho.crm.updateRecord("Sales_Persons", newOwnerId, {"Last_Assigned": true});
+
+// 6) Update the Lead record's Assigned_to field
+info "Assigning Lead to user: " + newOwnerId;
+info zoho.crm.updateRecord("Leads", LeadID, {"Assigned_to": newOwnerId.toLong()});

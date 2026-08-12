@@ -1,0 +1,145 @@
+/**
+ * ============================================================================
+ * PATTERN: External API Sync, Pre-Deduplication & Chunked Bulk Upsert
+ * ============================================================================
+ * 
+ * USE CASE:
+ * Pulls transactional/payment data from an external REST API, pre-checks 
+ * parent asset existence and payment uniqueness in CRM, and streams records 
+ * into Zoho CRM using a 100-record chunking pattern to maximize API efficiency.
+ *
+ * KEY HIGHLIGHTS:
+ * 1. Dynamic Sliding Date Window (`zoho.currentdate.subDay(1)`)
+ * 2. Pre-flight CRM Lookups (Asset Existence & Payment Deduplication)
+ * 3. Map-of-Lists Memory Chunking (Groups items in 100-record batches)
+ * 4. Direct REST V8 Bulk Payload execution via `invokeurl` connection
+ * ============================================================================
+ */
+void schedule.NZ_Pull_all_LHFS_Payment_Data()
+{
+	// ------------------------------------------------------------------------
+	// 1. AUTHENTICATION & HEADERS
+	// ------------------------------------------------------------------------
+	// SECURITY: Store credentials in standard place; do not hardcode secrets
+	api_username = "YOUR_USERNAME";
+	api_password = "YOUR_PASSWORD";
+	
+	token_response = invokeurl
+	[
+		url :"https://corpapi.lhfs.com/investor/Account/authenticate?username=" + api_username + "&password=" + api_password
+		type :POST
+	];
+	
+	bearer_key = "Bearer " + token_response.trim();
+	m_headers = Map();
+	m_headers.put("Authorization", bearer_key);
+	m_headers.put("Content-Type", "application/json");
+
+	// ------------------------------------------------------------------------
+	// 2. CONFIGURATION & DYNAMIC DATES
+	// ------------------------------------------------------------------------
+	investor_ids_list = {5924, 5874, 5923, 5866, 5909, 5880, 5873, 5892, 5891, 5899};
+	
+	// Dynamic sliding window (Yesterday -> Today)
+	start_date = zoho.currentdate.subDay(1).toString("yyyy-M-d");
+	end_date = zoho.currentdate.toString("yyyy-M-d");
+
+	// ------------------------------------------------------------------------
+	// 3. BATCHING ENGINE SETUP
+	// ------------------------------------------------------------------------
+	payments_list = List();             // Current batch buffer (Max 100)
+	payments_list_map = Map();         // Master map storing batches ("list_1" -> List, "list_2" -> List...)
+	counter = 0;
+	BATCH_LIMIT = 100;                 // Zoho CRM V8 bulk limit
+
+	// ------------------------------------------------------------------------
+	// 4. FETCH & PROCESS DATA
+	// ------------------------------------------------------------------------
+	for each inv_id in investor_ids_list
+	{
+		endpoint_url = "https://corpapi.lhfs.com/investor/Reporting/loan-history?InvestorIds=" + inv_id + "&startDate=" + start_date + "&endDate=" + end_date;
+		
+		lhfs_response = invokeurl
+		[
+			url :endpoint_url
+			type :GET
+			headers: m_headers
+		];
+		
+		for each record in lhfs_response
+		{
+			loan_number = ifnull(record.get("LoanId"), "NA");
+			
+			// --- Pre-flight Check 1: Parent Asset must exist ---
+			search_assets = zoho.crm.searchRecords("Assets2", "(SVC_Loan_ID:equals:" + loan_number + ")");
+			
+			if(search_assets.size() > 0)
+			{
+				v_txn_date_str = ifnull(record.get("TransactionDate"), "").toString().trim();
+				v_txn_date_str = ifnull(v_txn_date_str.subString(0, 10), "");
+				
+				// --- Pre-flight Check 2: Skip existing payments (Deduplication) ---
+				search_payments = zoho.crm.searchRecords("Payments", "(SVC_Loan_ID:equals:" + loan_number + ")AND(Date_Received:equals:" + v_txn_date_str + ")");
+				
+				if(search_payments.size() == 0)
+				{
+					// Build payment mapping payload
+					payment_map = Map();
+					payment_map.put("SVC_Loan_ID", loan_number);
+					payment_map.put("Loan_ID", search_assets.getJSON("id"));
+					payment_map.put("Date_Received", if(v_txn_date_str != "" && v_txn_date_str.length() >= 10, v_txn_date_str.subString(0, 10), null));
+					payment_map.put("Reference", ifnull(record.get("TransactionCode"), ""));
+					payment_map.put("Total_Amount", ifnull(record.get("TransactionAmount"), ""));
+					
+					v_due_str = ifnull(record.get("DueDate"), "").toString().trim();
+					payment_map.put("Date_Due", if(v_due_str != "" && v_due_str.length() >= 10, v_due_str.subString(0, 10), null));
+					
+					payment_map.put("To_Principal", ifnull(record.get("PrincipalAmount"), ""));
+					payment_map.put("To_Escrow", ifnull(record.get("EscrowAmount"), ""));
+					payment_map.put("To_Interest", ifnull(record.get("InterestAmount"), ""));
+					payment_map.put("Late_Charges_Paid", ifnull(record.get("LateChargeAmount"), ""));
+					
+					// Add record to current batch
+					payments_list.add(payment_map);
+					
+					// Store batch once limit is reached
+					if(payments_list.size() == BATCH_LIMIT)
+					{
+						counter = counter + 1;
+						payments_list_map.put("list_" + counter, payments_list);
+						payments_list = List(); // Clear batch buffer
+					}
+				}
+			}
+		}
+	}
+
+	// Flush remaining leftover records (< 100 items)
+	if(payments_list.size() > 0)
+	{
+		counter = counter + 1;
+		payments_list_map.put("list_" + counter, payments_list);
+	}
+
+	// ------------------------------------------------------------------------
+	// 5. CRM BULK EXECUTION
+	// ------------------------------------------------------------------------
+	for each batch_key in payments_list_map.keys()
+	{
+		records_list = payments_list_map.get(batch_key);
+		
+		final_update_map = Map();
+		final_update_map.put("data", records_list);
+		final_update_map.put("trigger", {}); // Prevents workflow triggers during mass insertion
+		
+		records_updated = invokeurl
+		[
+			url :"https://www.zohoapis.com/crm/v8/Payments"
+			type :POST
+			parameters: final_update_map.toString()
+			connection: "crmconnection"
+		];
+		
+		info "Batch [" + batch_key + "] processed: " + records_updated;
+	}
+}

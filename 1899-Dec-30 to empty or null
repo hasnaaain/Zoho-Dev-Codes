@@ -1,0 +1,77 @@
+string standalone.Clear_Bad_1899_Date_Fields()
+{
+	// ===== CHANGE ONLY THIS EACH RUN =====
+	moduleName = "Assets2";
+	pageNumber = 1;   // 1 → 2 → 3 → 4
+	pageSize = 100;
+	// =====================================
+
+	badDateToken = "1899-12-30";
+	totalRecords = 0;
+	totalUpdated = 0;
+	totalSkipped = 0;
+	totalFieldsCleared = 0;
+
+	// Never clear these
+	skipKeys = {"id","Created_Time","Modified_Time","Created_By","Modified_By","Owner","Tag","Last_Activity_Time","Unsubscribed_Time","Name","$currency_symbol","$field_states","$state","$process_flow","$locked_for_me","$approved","$approval","$editable","$orchestration","$pathfinder","$stop_processing","$approval_state","$review","$review_process","$wizard_connection_path","$layout_id","$in_merge","$zia_owner_assignment","Record_Image","Asset","Old_Asset"};
+
+	recordsPage = zoho.crm.getRecords(moduleName, pageNumber, pageSize);
+	if(recordsPage == null || recordsPage.size() == 0)
+	{
+		info "No records on page " + pageNumber;
+		return "No records on page " + pageNumber;
+	}
+
+	info "Module: " + moduleName + " | page " + pageNumber + " | count: " + recordsPage.size();
+
+	for each rec in recordsPage
+	{
+		totalRecords = totalRecords + 1;
+		recId = rec.get("id");
+		fullRec = zoho.crm.getRecordById(moduleName, recId);
+
+		updateMap = Map();
+		clearedOnThis = 0;
+
+		for each key in fullRec.keys()
+		{
+			if(!skipKeys.contains(key))
+			{
+				val = fullRec.get(key);
+				if(val != null)
+				{
+					valText = val.toString();
+
+					// API format from your payload: 1899-12-30 or 1899-12-30T00:00:00-06:00
+					// UI format sometimes: Dec 30, 1899
+					if(valText.contains(badDateToken) || valText.contains("Dec 30, 1899") || valText.contains("30 Dec 1899"))
+					{
+						updateMap.put(key, null);
+						clearedOnThis = clearedOnThis + 1;
+						info "Clear " + recId + " | " + key + " | was: " + valText;
+					}
+				}
+			}
+		}
+
+		if(clearedOnThis > 0)
+		{
+			resp = zoho.crm.updateRecord(moduleName, recId, updateMap);
+			info "Updated " + recId + " | cleared " + clearedOnThis + " | " + resp;
+			totalUpdated = totalUpdated + 1;
+			totalFieldsCleared = totalFieldsCleared + clearedOnThis;
+		}
+		else
+		{
+			totalSkipped = totalSkipped + 1;
+		}
+	}
+
+	info "======= PAGE " + pageNumber + " SUMMARY =======";
+	info "Scanned: " + totalRecords;
+	info "Updated: " + totalUpdated;
+	info "No bad dates: " + totalSkipped;
+	info "Fields cleared: " + totalFieldsCleared;
+
+	return "Page " + pageNumber + " | scanned " + totalRecords + " | updated " + totalUpdated + " | fields cleared " + totalFieldsCleared;
+}

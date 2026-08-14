@@ -1,0 +1,30 @@
+
+info dealid;
+Getblueprint = invokeurl
+[
+	url :"https://www.zohoapis.eu/crm/v8/Deals/" + dealid + "/actions/blueprint"
+	type :GET
+	connection:"conn_crm"
+];
+info Getblueprint;
+// transition >>>>>>>>>>>>>
+	transition_id = Getblueprint.get("blueprint").get("transitions").get(0).get("id");
+	info transition_id;
+	data_map = Map();
+	data_map.put("Stage","Quote Accepted");
+	transition_map = Map();
+	transition_map.put("transition_id",transition_id);
+	transition_map.put("data",data_map);
+	blueprint_list = list();
+	blueprint_list.add(transition_map);
+	final_map = Map();
+	final_map.put("blueprint",blueprint_list);
+	UpdateStage = invokeurl
+	[
+		url :"https://www.zohoapis.eu/crm/v3/Deals/" + dealid + "/actions/blueprint"
+		type :PUT
+		parameters:final_map.toString()
+		connection:"conn_crm"
+	];
+	info UpdateStage;
+}

@@ -1,0 +1,146 @@
+string button.make_recurring_invoices(String dealid,String Multivalue_field)
+{
+// 	string Multivalue_field
+// Rivoiceid = 8085854000000308025;
+orgid = 20111201964;
+// //get rec invoices
+// RecInvoiceDet = invokeurl
+// [
+// 	url :"https://www.zohoapis.eu/books/v3/recurringinvoices/" + Rivoiceid + "?organization_id=" + orgid
+// 	type :GET
+// 	connection:"connbooks"
+// ];
+// info RecInvoiceDet;
+// get accounts or customer from the books
+dealdata = zoho.crm.getRecordById("Deals",dealid);
+info dealdata;
+dealName = dealdata.get("Deal_Name");
+info dealName;
+// Accountid = ifnull(dealdata.get("Account_Name").get("id"),"null");
+// Accountid = ifnull(dealdata.get("Account_Name"),"null");
+// Account_Name = dealdata.get("Account_Name");
+Contact_Name = ifnull(dealdata.get("Contact_Name"),"contact not found");
+info Contact_Name;
+ContactID = Contact_Name.get("id");
+info ContactID;
+contactdet = zoho.crm.getRecordById("Contacts",ContactID);
+info contactdet;
+Account_Name = contactdet.get("Account_Name");
+info Account_Name;
+if(Account_Name == null)
+{
+	info "inside if account is  null";
+	info ContactID;
+	response = invokeurl
+	[
+		url :"https://www.zohoapis.eu/books/v3/crm/contact/" + ContactID + "/import?organization_id=" + orgid
+		type :POST
+		connection:"connbooks"
+	];
+	info response;
+}
+else
+{
+	info "inside else account is not empty ";
+	AccountID = ifnull(Account_Name.get("id"),"Account id not found");
+	//import api of accounts
+	response = invokeurl
+	[
+		url :"https://www.zohoapis.eu/books/v3/crm/account/" + AccountID + "/import?organization_id=" + orgid
+		type :POST
+		connection:"connbooks"
+	];
+	info response;
+}
+customerID = response.get("data").get("customer_id");
+info " >>> customer id " + customerID;
+customerdet = zoho.books.getRecordsByID("contacts",orgid,customerID,"connbooks");
+info customerdet;
+//monthly recurring invoice 
+// checks and conditions on the multivalue field
+// Multivalue_field = "Yearly";
+// Or your input field
+if(Multivalue_field == "Monthly")
+{
+	recurrence_name = "Monthly subscription " + dealName;
+	recurrence_frequency = "months";
+	repeat_every = 1;
+}
+else if(Multivalue_field == "Bi-Monthly")
+{
+	recurrence_name = "Bi-Monthly subscription " + dealName;
+	recurrence_frequency = "months";
+	repeat_every = 6;
+}
+else if(Multivalue_field == "Yearly")
+{
+	recurrence_name = "Yearly subscription " + dealName;
+	recurrence_frequency = "years";
+	repeat_every = 1;
+}
+else
+{
+	// This triggers if none of the above matches
+	info "Error: This type of subscription ('" + Multivalue_field + "') is not found.";
+}
+info recurrence_name;
+info recurrence_frequency;
+info repeat_every;
+//now product list item fields
+// dealsubform = dealdata.get("subformproducts");
+dealsubform = dealdata.get("items");
+info dealsubform;
+if(dealsubform == null)
+{
+	info ">>>>>>>>>>>>>>>No subform found";
+}
+info dealsubform;
+lineItems = List();
+for each  prod in dealsubform
+{
+	Quantity = prod.get("Quantity");
+	Description = prod.get("Description");
+	Unit_Price = prod.get("Unit_Price");
+	Total_Price = prod.get("Total_Price");
+	productName = prod.get("Product_Name").get("name");
+	searchItemParam = Map();
+	searchItemParam.put("name",productName);
+	itemResp = zoho.books.getRecords("Items",orgid,searchItemParam,"connbooks");
+	info itemResp;
+	if(itemResp.get("code") == 0 && itemResp.get("items").size() > 0)
+	{
+		itemID = itemResp.get("items").get(0).get("item_id");
+		lineItem = Map();
+		lineItem.put("item_id",itemID);
+		lineItem.put("name",productName);
+		lineItem.put("quantity",Quantity);
+		lineItem.put("Total_Price",Total_Price);
+		lineItem.put("Unit_Price",Unit_Price);
+		lineItems.add(lineItem);
+	}
+	else
+	{
+		info "Item not found in Books: " + productName;
+	}
+}
+info ">>>>>>>>>>>>>>>>>>> " + lineItems;
+//>>>>>>Creatign Recinvocie
+RecInvmp = Map();
+RecInvmp.put("customer_id",customerID);
+RecInvmp.put("recurrence_name",recurrence_name);
+RecInvmp.put("recurrence_frequency",recurrence_frequency);
+RecInvmp.put("repeat_every",repeat_every);
+RecInvmp.put("line_items",lineItems);
+info RecInvmp;
+CreatedRecINV_response = invokeurl
+[
+	url :"https://www.zohoapis.eu/books/v3/recurringinvoices?organization_id=" + orgid
+	type :POST
+	parameters:RecInvmp.toString()
+	connection:"connbooks"
+];
+info CreatedRecINV_response;
+RecInvID = ifnull(CreatedRecINV_response.get("recurring_invoice").get("recurring_invoice_id"),"RecINV not found");
+info RecInvID;
+return "";
+}

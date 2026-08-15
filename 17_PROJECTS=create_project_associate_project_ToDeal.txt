@@ -1,0 +1,41 @@
+string button.project_creation(String dealid)
+{
+dealdata = zoho.crm.getRecordById("Deals",dealid);
+// info dealdata;
+projectName = dealdata.get("Deal_Name");
+parametermap = Map();
+parametermap.put("name",projectName);
+response = invokeurl
+[
+	url :"https://projectsapi.zoho.com/restapi/portal/testacc/projects/"
+	type :POST
+	parameters:parametermap
+	connection:"connprojects"
+];
+info response;
+
+//>>>>>>>>>.Association
+projectid = response.get("projects").get(0).get("id");
+info projectid;
+association_map = Map();
+association_map.put("name",projectName);
+// dealdet = Map();
+// dealdet.put("id",projectid);
+association_map.put("deals",dealdata.toList());
+datalist = List();
+datalist.add(association_map);
+datamp = Map();
+datamp.put("data",datalist);
+info datamp;
+// res = zoho.projects.createProject("testacc", datamp, "connprojects");
+// info res;
+associate_to_deal = invokeurl
+[
+	url :"https://www.zohoapis.com/crm/v2/Deals/" + dealid + "/Zoho_Projects/" + projectid
+	type :POST
+	parameters:datamp.toString()
+	connection:"connprojects"
+];
+info associate_to_deal;
+return "";
+}
